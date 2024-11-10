@@ -42,7 +42,7 @@ type SubjectGrade {
     CA2:        Float!    # Continuous Assessment 2 score
     OBJ:         Float!    # Objective test score
     THEO:        Float!    # Theory test score
-    TotalMarks:  Float!   # Total marks for the subject (after applying weights)
+    TotalMarks:  Float!   # Total marks for the subject
     Grade:       String!   # Final grade for the subject
     Position: String! # Position for particular subject
 }
