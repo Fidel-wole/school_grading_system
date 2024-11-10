@@ -1,0 +1,84 @@
+# GraphQL schema example
+#
+# https://gqlgen.com/getting-started/
+
+# Student represents a student and their overall academic performance
+type Student {
+  id: ID!
+  name: String!
+  termGrades: [TermGrade!]!
+  subjectCumulative: [CumulativeGrade!]!
+  cumulativeScore: Float
+  finalGrade: String
+  classPosition: Int
+}
+
+# Term represents a school term (e.g., "First Term")
+type Term {
+  id: ID!
+  name: String!
+}
+
+# Subject represents a school subject (e.g., "Mathematics")
+type Subject {
+  id: ID!
+  name: String!
+}
+
+# TermGrade represents a student's grades for a specific term
+type TermGrade {
+  id: ID!
+  Student: Student!
+  Term: Term!
+  TotalMarks: Float!
+  AverageMarks: Float!
+  Subjects: [SubjectGrade]!
+}
+
+# SubjectGrade represents a student's score and grade for a specific subject within a term
+type SubjectGrade {
+    Subject:     Subject!  # Subject that the grade belongs to
+    CA1:         Float!    # Continuous Assessment 1 score
+    CA2:        Float!    # Continuous Assessment 2 score
+    OBJ:         Float!    # Objective test score
+    THEO:        Float!    # Theory test score
+    TotalMarks:  Float!   # Total marks for the subject (after applying weights)
+    Grade:       String!   # Final grade for the subject
+    Position: String! # Position for particular subject
+}
+
+# CumulativeGrade represents a student's cumulative score and grade for each subject across all terms
+type CumulativeGrade {
+  subject: Subject!
+  cumulativeScore: Float!
+  cumulativeGrade: String!
+}
+
+# Queries for retrieving students and their academic records
+type Query {
+  getStudent(id: ID!): Student
+  getAllStudents: [Student!]!
+  getStudentGradesByTerm(studentId: ID!, termId: ID!): TermGrade
+  getStudentCumulativeGrades(studentId: ID!): [CumulativeGrade!]!
+  getSubjectById(subjectID: ID!): Subject!
+}
+
+# Mutations for adding students, subjects, terms, and grades
+type Mutation {
+  addStudent(name: String!): Student!
+  addSubject(name: String!): Subject!
+  addTerm(name: String!): Term!
+  addGrade(
+    studentId: ID!
+    termId: ID!
+    subjects: [SubjectGradeInput!]!
+  ): TermGrade!
+}
+
+input SubjectGradeInput {
+  subjectId: ID!
+  ca1: Float!
+  ca2: Float!
+  obj: Float!
+  theo: Float!
+}
