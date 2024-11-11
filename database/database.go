@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
+	//"sort"
 	"time"
 
 	"cloudnotte_practice/graph/model"
@@ -149,7 +149,7 @@ func (db *DB) AddGrade(studentId, termId string, subjects []*model.SubjectGrade)
 
 	// This Calculates the  total marks and average marks for all subjects
 	for _, subject := range subjects {
-
+		fmt.Printf("Subject ID: %s, Subject Name: %s\n", subject.Subject.ID, subject.Subject.Name)
 		weightedMarks := subject.Ca1 +
 			subject.Ca2 +
 			subject.Obj +
@@ -220,15 +220,32 @@ func assignGrade(mark float64) string {
 }
 
 func (db *DB) GetSubjectByID(subjectId string) (*model.Subject, error) {
+	// Convert string ID to MongoDB ObjectID
 	objectId, err := primitive.ObjectIDFromHex(subjectId)
 	if err != nil {
 		return nil, fmt.Errorf("invalid subject ID: %v", err)
 	}
 
-	subject := &model.Subject{}
-	err = db.client.Database("school_management_system").Collection("subjects").FindOne(context.Background(), bson.M{"_id": objectId}).Decode(subject)
+	// Temporary struct to map MongoDB `_id` to Go's ObjectID type
+	var mongoSubject struct {
+		ID   primitive.ObjectID `bson:"_id"`
+		Name string             `bson:"name"`
+	}
+
+	// Retrieve the subject from MongoDB
+	err = db.client.Database("school_management_system").
+		Collection("subjects").
+		FindOne(context.Background(), bson.M{"_id": objectId}).
+		Decode(&mongoSubject)
+
 	if err != nil {
 		return nil, fmt.Errorf("error finding subject: %v", err)
+	}
+
+	// Convert MongoDB ObjectID to string for the gqlgen Subject struct
+	subject := &model.Subject{
+		ID:   mongoSubject.ID.Hex(),
+		Name: mongoSubject.Name,
 	}
 
 	return subject, nil
@@ -254,83 +271,124 @@ func (db *DB) GetTermByID(termID primitive.ObjectID) (*model.Term, error) {
 }
 
 func (db *DB) GetStudentGradesByTerm(studentId, termId string) (*model.TermGrade, error) {
-	// Convert string IDs to ObjectID
-	studentOid, err := primitive.ObjectIDFromHex(studentId)
-	if err != nil {
-		return nil, fmt.Errorf("invalid student ID: %v", err)
-	}
+    // This Convert string IDs to ObjectID
+    studentOid, err := primitive.ObjectIDFromHex(studentId)
+    if err != nil {
+        return nil, fmt.Errorf("invalid student ID: %v", err)
+    }
 
-	termOid, err := primitive.ObjectIDFromHex(termId)
-	if err != nil {
-		return nil, fmt.Errorf("invalid term ID: %v", err)
-	}
+    termOid, err := primitive.ObjectIDFromHex(termId)
+    if err != nil {
+        return nil, fmt.Errorf("invalid term ID: %v", err)
+    }
 
-	filter := bson.M{
-		"student.id": studentOid.Hex(),
-		"term.id":    termOid.Hex(),
-	}
+    // Filter to find the specific student's grades for the term
+    filter := bson.M{
+        "student.id": studentOid.Hex(),
+        "term.id":    termOid.Hex(),
+    }
 
-	
-	var termGrade model.TermGrade
-	err = db.client.Database("school_management_system").Collection("student_grades").
-		FindOne(context.Background(), filter).Decode(&termGrade)
+    var termGrade model.TermGrade
+    err = db.client.Database("school_management_system").Collection("student_grades").
+        FindOne(context.Background(), filter).Decode(&termGrade)
 
-	
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("no grades found for student in the specified term")
-		}
-		return nil, fmt.Errorf("error fetching student grades: %v", err)
-	}
+    if err != nil {
+        if err == mongo.ErrNoDocuments {
+            return nil, fmt.Errorf("no grades found for student in the specified term")
+        }
+        return nil, fmt.Errorf("error fetching student grades: %v", err)
+    }
 
-	// For each subject, calculate the position of the student
-	for i, subjectGrade := range termGrade.Subjects {
-		var allGradesForSubject []model.SubjectGrade
-		cursor, err := db.client.Database("school_management_system").
-			Collection("student_grades").
-			Find(context.Background(), bson.M{
-				"term.id":             termOid.Hex(),
-				"subjects.subject.id": subjectGrade.Subject.ID,
-			})
-		if err != nil {
-			return nil, fmt.Errorf("error fetching grades for the subject: %v", err)
-		}
-		defer cursor.Close(context.Background())
+    // For each subject, calculate the student's position using MongoDB aggregation
+    for i, subjectGrade := range termGrade.Subjects {
+        fmt.Printf("Processing subject ID: %s\n", subjectGrade.Subject.ID)
 
-		// Collect all grades for the specific subject
-		for cursor.Next(context.Background()) {
-			var gradeEntry model.TermGrade
-			if err := cursor.Decode(&gradeEntry); err != nil {
-				return nil, fmt.Errorf("error decoding grade entry: %v", err)
-			}
+        pipeline := mongo.Pipeline{
+            // Match documents for the specific term
+            bson.D{
+                {Key: "$match", Value: bson.D{
+                    {Key: "term.id", Value: termOid.Hex()},
+                }},
+            },
+            // Unwind subjects to get individual subject records
+            bson.D{
+                {Key: "$unwind", Value: "$subjects"},
+            },
+            // Match the specific subject we're interested in
+            bson.D{
+                {Key: "$match", Value: bson.D{
+                    {Key: "subjects.subject.id", Value: subjectGrade.Subject.ID},
+                }},
+            },
+            // Project the relevant fields
+            bson.D{
+                {Key: "$project", Value: bson.D{
+                    {Key: "studentId", Value: "$student.id"},
+                    {Key: "totalMarks", Value: "$subjects.totalmarks"}, // Fixed field name to match document structure
+                }},
+            },
+            // Sort by total marks in descending order
+            bson.D{
+                {Key: "$sort", Value: bson.D{
+                    {Key: "totalMarks", Value: -1},
+                }},
+            },
+            // Add dense rank
+            bson.D{
+                {Key: "$setWindowFields", Value: bson.D{
+                    {Key: "partitionBy", Value: bson.D{}},
+                    {Key: "sortBy", Value: bson.D{
+                        {Key: "totalMarks", Value: -1},
+                    }},
+                    {Key: "output", Value: bson.D{
+                        {Key: "position", Value: bson.D{
+                            {Key: "$denseRank", Value: bson.D{}},
+                        }},
+                    }},
+                }},
+            },
+            // This Match only the current student to get their position
+            bson.D{
+                {Key: "$match", Value: bson.D{
+                    {Key: "studentId", Value: studentOid.Hex()},
+                }},
+            },
+        }
 
-			// Collect subject grades for the matching subject
-			for _, sg := range gradeEntry.Subjects {
-				if sg.Subject.ID == subjectGrade.Subject.ID {
-					allGradesForSubject = append(allGradesForSubject, *sg)
-				}
-			}
-		}
+        // Debug: Print the pipeline
+        fmt.Printf("Aggregation Pipeline for subject %s: %+v\n", subjectGrade.Subject.ID, pipeline)
 
-		// This sort the grades by TotalMarks in descending order
-		sort.Slice(allGradesForSubject, func(i, j int) bool {
-			return allGradesForSubject[i].TotalMarks > allGradesForSubject[j].TotalMarks
-		})
+        cursor, err := db.client.Database("school_management_system").
+            Collection("student_grades").
+            Aggregate(context.Background(), pipeline)
+        if err != nil {
+            return nil, fmt.Errorf("error calculating position for subject: %v", err)
+        }
+        defer cursor.Close(context.Background())
 
-		// We go ahead to Find the student's position in the sorted list
-		position := -1
-		for idx, sg := range allGradesForSubject {
-			if sg.Subject.ID == subjectGrade.Subject.ID && sg.TotalMarks == subjectGrade.TotalMarks {
-				position = idx + 1
-				break
-			}
-		}
+        var allResults []struct {
+            StudentID  string `bson:"studentId"`
+            Position   int    `bson:"position"`
+            TotalMarks int    `bson:"totalMarks"`
+        }
 
-		// We then Add the position to the subject grade
-		if position != -1 {
-			termGrade.Subjects[i].Position = fmt.Sprintf("Position: %d", position)
-		}
-	}
+        if err := cursor.All(context.Background(), &allResults); err != nil {
+            return nil, fmt.Errorf("error reading all results: %v", err)
+        }
 
-	return &termGrade, nil
+        fmt.Printf("Results for subject %s: %+v\n", subjectGrade.Subject.ID, allResults)
+
+        if len(allResults) > 0 {
+            result := allResults[0]
+            fmt.Printf("Found position for student %s: Position=%d, TotalMarks=%d\n",
+                result.StudentID, result.Position, result.TotalMarks)
+            termGrade.Subjects[i].Position = fmt.Sprintf("Position: %d", result.Position)
+        } else {
+            fmt.Printf("No position found for student %s in subject %s\n",
+                studentOid.Hex(), subjectGrade.Subject.ID)
+            termGrade.Subjects[i].Position = "Position not available"
+        }
+    }
+
+    return &termGrade, nil
 }
