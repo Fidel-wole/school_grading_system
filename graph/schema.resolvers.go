@@ -37,7 +37,7 @@ func (r *mutationResolver) AddGrade(ctx context.Context, studentID string, termI
 			return nil, fmt.Errorf("subject not found: %v", err)
 		}
 		fmt.Printf("Subject ID: %v\n", subject.ID)
-		// Create a new SubjectGrade instance based on SubjectGradeInput
+		// This Creates a new SubjectGrade instance based on SubjectGradeInput
 		subjectGrade := &model.SubjectGrade{
 			Subject: subject,
 			Ca1:     subjectInput.Ca1,
